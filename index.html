@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Fix YouTube Error 153 by setting correct referrer policy -->
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>동작 따라하기 리듬 게임</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- TensorFlow.js and Teachable Machine Pose Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Pretendard', sans-serif;
+        }
+        .glow-active {
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.8);
+        }
+        .glow-success {
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.9);
+        }
+        .animate-pop {
+            animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes pop {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center justify-between p-4 md:p-6">
+
+    <!-- Top Header & Scoreboard -->
+    <header class="w-full max-w-6xl flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur border border-slate-700 rounded-2xl p-4 mb-4 shadow-xl">
+        <div class="flex items-center gap-3 mb-2 md:mb-0">
+            <div class="p-3 bg-indigo-600 rounded-xl text-2xl shadow-lg">
+                <i class="fa-solid fa-gamepad"></i>
+            </div>
+            <div>
+                <h1 class="text-xl md:text-2xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400">
+                    모션 챌린지 댄스
+                </h1>
+                <p class="text-xs text-slate-400">영상의 동작을 타이밍에 맞춰 따라 해보세요!</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-6 bg-slate-900/80 px-6 py-2.5 rounded-xl border border-slate-700/60">
+            <div class="text-center">
+                <div class="text-xs text-slate-400 font-semibold uppercase">SCORE</div>
+                <div id="score-display" class="text-3xl font-black text-amber-400">0</div>
+            </div>
+            <div class="h-8 w-[1px] bg-slate-700"></div>
+            <div class="text-center">
+                <div class="text-xs text-slate-400 font-semibold uppercase">COMBO</div>
+                <div id="combo-display" class="text-3xl font-black text-emerald-400">0</div>
+            </div>
+            <div class="h-8 w-[1px] bg-slate-700"></div>
+            <div class="text-center">
+                <div class="text-xs text-slate-400 font-semibold uppercase">STATUS</div>
+                <div id="status-badge" class="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-700 text-slate-300 mt-1">대기 중</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4 flex-grow">
+        
+        <!-- Left: YouTube Player Card -->
+        <div class="flex flex-col bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden shadow-xl">
+            <div class="bg-slate-800/90 px-4 py-3 border-b border-slate-700 flex justify-between items-center">
+                <span class="font-bold text-sm text-slate-300 flex items-center gap-2">
+                    <i class="fa-brands fa-youtube text-red-500 text-lg"></i> 타겟 가이드 영상
+                </span>
+                <span id="video-time" class="text-xs font-mono bg-slate-900 px-2.5 py-1 rounded-md text-indigo-300">00:00 / 00:00</span>
+            </div>
+            
+            <div class="relative w-full aspect-video bg-black flex items-center justify-center">
+                <!-- YouTube API Mount Target -->
+                <div id="player" class="w-full h-full"></div>
+            </div>
+
+            <!-- Current Required Action Info Banner -->
+            <div class="p-4 bg-slate-800/60 border-t border-slate-700/80 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400">현재 필요한 동작</div>
+                    <div id="current-target-name" class="text-2xl font-black text-indigo-400 tracking-wide mt-0.5">READY</div>
+                </div>
+                <div class="text-right">
+                    <a href="https://www.youtube.com/watch?v=oRr5hxr_bRA" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-400 hover:underline flex items-center gap-1">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i> YouTube에서 바로보기
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Webcam & Pose Detection Card -->
+        <div class="flex flex-col bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden shadow-xl relative">
+            <div class="bg-slate-800/90 px-4 py-3 border-b border-slate-700 flex justify-between items-center">
+                <span class="font-bold text-sm text-slate-300 flex items-center gap-2">
+                    <i class="fa-solid fa-camera text-blue-400 text-lg"></i> 내 모션 인식 (Webcam)
+                </span>
+                <span id="detected-action-badge" class="text-xs font-bold px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-700">
+                    인식 없음
+                </span>
+            </div>
+
+            <!-- Webcam Canvas Wrapper -->
+            <div class="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden">
+                <canvas id="webcam-canvas" class="w-full h-full object-cover transform -scale-x-100"></canvas>
+                
+                <!-- Feedback Toast (PERFECT / MISS Overlay) -->
+                <div id="feedback-overlay" class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 transition-opacity duration-200">
+                    <span id="feedback-text" class="text-5xl font-black tracking-wider drop-shadow-[0_5px_5px_rgba(0,0,0,0.8)]"></span>
+                </div>
+
+                <!-- Loading Spinner Overlay -->
+                <div id="model-loading-overlay" class="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center p-6 text-center z-10">
+                    <i class="fa-solid fa-circle-notch fa-spin text-4xl text-indigo-500 mb-3"></i>
+                    <p class="font-bold text-slate-200">티처블 머신 AI 모델을 로딩 중입니다...</p>
+                    <p class="text-xs text-slate-400 mt-1">카메라 권한을 허용해 주세요.</p>
+                </div>
+            </div>
+
+            <!-- Detected Probability Meters -->
+            <div class="p-4 bg-slate-800/60 border-t border-slate-700/80 flex-grow flex flex-col justify-center gap-2">
+                <div class="text-xs text-slate-400 mb-1 font-semibold">실시간 동작 인식 확률</div>
+                <div id="probability-container" class="grid grid-cols-3 gap-2">
+                    <!-- Probability items injected via JS -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Action Sequence Timeline -->
+    <section class="w-full max-w-6xl bg-slate-800 border border-slate-700 rounded-2xl p-4 mb-4 shadow-xl">
+        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-list-check text-indigo-400"></i> 타임라인별 동작 순서
+        </h3>
+        <div id="timeline-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+            <!-- Dynamic timeline cards inserted here -->
+        </div>
+    </section>
+
+    <!-- Controls Footer -->
+    <footer class="w-full max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-800/60 border border-slate-700/80 p-4 rounded-2xl">
+        <div class="flex items-center gap-3 w-full sm:w-auto">
+            <button id="btn-start" disabled class="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-bold rounded-xl shadow-lg transition duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed">
+                <i class="fa-solid fa-play"></i> 게임 시작
+            </button>
+            <button id="btn-pause" disabled class="w-full sm:w-auto px-5 py-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-bold rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed">
+                <i class="fa-solid fa-pause"></i> 일시정지
+            </button>
+        </div>
+        <div class="text-xs text-slate-400 text-center sm:text-right">
+            <span>티처블 머신 클래스: REST, SAY HI, WALK, SWING, PAW, JUMP</span>
+        </div>
+    </footer>
+
+    <script>
+        // Teachable Machine Model URL
+        const MODEL_URL = "https://teachablemachine.withgoogle.com/models/zs8hi_2dc/";
+        const YOUTUBE_VIDEO_ID = "oRr5hxr_bRA";
+
+        // Action timeline definitions (Start Time, End Time, Expected Action)
+        const ACTION_TIMELINE = [
+            { id: 1, action: 'REST', start: 0, end: 4, name: '휴식 (REST)', icon: 'fa-bed' },
+            { id: 2, action: 'SAY HI', start: 4, end: 9, name: '인사하기 (SAY HI)', icon: 'fa-hand-wave' },
+            { id: 3, action: 'WALK', start: 9, end: 14, name: '걷기 (WALK)', icon: 'fa-person-walking' },
+            { id: 4, action: 'SWING', start: 14, end: 19, name: '스윙 (SWING)', icon: 'fa-person-swimming' },
+            { id: 5, action: 'PAW', start: 19, end: 24, name: '손 내밀기 (PAW)', icon: 'fa-paw' },
+            { id: 6, action: 'JUMP', start: 24, end: 29, name: '점프 (JUMP)', icon: 'fa-child-reaching' }
+        ];
+
+        // Application State
+        let player = null;
+        let model = null;
+        let webcam = null;
+        let ctx = null;
+        let isPlaying = false;
+        let score = 0;
+        let combo = 0;
+        let currentTimelineIndex = -1;
+        let actionEvaluated = {}; 
+        let animationFrameId = null;
+
+        // UI Element References
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+        const scoreDisplay = document.getElementById('score-display');
+        const comboDisplay = document.getElementById('combo-display');
+        const statusBadge = document.getElementById('status-badge');
+        const detectedBadge = document.getElementById('detected-action-badge');
+        const currentTargetName = document.getElementById('current-target-name');
+        const videoTimeDisplay = document.getElementById('video-time');
+        const feedbackOverlay = document.getElementById('feedback-overlay');
+        const feedbackText = document.getElementById('feedback-text');
+        const probabilityContainer = document.getElementById('probability-container');
+        const timelineContainer = document.getElementById('timeline-container');
+        const modelLoadingOverlay = document.getElementById('model-loading-overlay');
+
+        // Load YouTube IFrame API
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        function onYouTubeIframeAPIReady() {
+            // Error 153 protection: explicit host and origin domain parameter
+            player = new YT.Player('player', {
+                host: 'https://www.youtube-nocookie.com',
+                height: '100%',
+                width: '100%',
+                videoId: YOUTUBE_VIDEO_ID,
+                playerVars: {
+                    'playsinline': 1,
+                    'controls': 1,
+                    'rel': 0,
+                    'modestbranding': 1,
+                    'origin': window.location.origin || 'http://localhost'
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+        }
+
+        function onPlayerError(event) {
+            console.warn("YouTube Player Warning/Error Code:", event.data);
+            // Fallback iframe injection if API embed fails with error 153/101/150
+            const container = document.getElementById('player');
+            if (container && (!player || !player.playVideo)) {
+                container.innerHTML = `
+                    <iframe 
+                        class="w-full h-full" 
+                        src="https://www.youtube-nocookie.com/embed/${YOUTUBE_VIDEO_ID}?autoplay=0&controls=1&enablejsapi=1" 
+                        title="YouTube video player" 
+                        frameborder="0" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        referrerpolicy="strict-origin-when-cross-origin" 
+                        allowfullscreen>
+                    </iframe>
+                `;
+            }
+        }
+
+        function onPlayerReady(event) {
+            checkReadyState();
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.PLAYING) {
+                isPlaying = true;
+                statusBadge.textContent = "진행 중";
+                statusBadge.className = "text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-900/80 text-emerald-300 border border-emerald-700";
+            } else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) {
+                isPlaying = false;
+                statusBadge.textContent = event.data === YT.PlayerState.ENDED ? "종료됨" : "일시정지";
+                statusBadge.className = "text-xs font-bold px-2.5 py-1 rounded-full bg-amber-900/80 text-amber-300 border border-amber-700";
+            }
+        }
+
+        async function initTeachableMachine() {
+            try {
+                const modelPath = MODEL_URL + "model.json";
+                const metadataPath = MODEL_URL + "metadata.json";
+
+                model = await tmPose.load(modelPath, metadataPath);
+                
+                // Webcam Setup
+                const size = 400;
+                const flip = true;
+                webcam = new tmPose.Webcam(size, size, flip);
+                await webcam.setup();
+                await webcam.play();
+
+                const canvas = document.getElementById("webcam-canvas");
+                canvas.width = size;
+                canvas.height = size;
+                ctx = canvas.getContext("2d");
+
+                modelLoadingOverlay.classList.add('hidden');
+                checkReadyState();
+                renderProbabilityBars();
+                
+                // Start continuous pose detection loop
+                requestAnimationFrame(loop);
+            } catch (error) {
+                console.error("Teachable Machine 초기화 실패:", error);
+                modelLoadingOverlay.innerHTML = `
+                    <i class="fa-solid fa-triangle-exclamation text-red-500 text-4xl mb-2"></i>
+                    <p class="font-bold text-red-400">웹캠 또는 AI 모델을 로드할 수 없습니다.</p>
+                    <p class="text-xs text-slate-400 mt-1">웹캠 권한 허용 상태를 확인해 보세요.</p>
+                `;
+            }
+        }
+
+        function checkReadyState() {
+            if (model && webcam) {
+                btnStart.disabled = false;
+                btnPause.disabled = false;
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            if (isPlaying && player && typeof player.getCurrentTime === 'function') {
+                updateGameLogic();
+            }
+            animationFrameId = requestAnimationFrame(loop);
+        }
+
+        let currentPredictions = [];
+
+        async function predict() {
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+            currentPredictions = prediction;
+
+            // Draw Canvas
+            ctx.drawImage(webcam.canvas, 0, 0);
+            if (pose) {
+                const minPartConfidence = 0.5;
+                tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+            }
+
+            // Find highest prediction
+            let highest = { className: 'UNKNOWN', probability: 0 };
+            prediction.forEach(p => {
+                if (p.probability > highest.probability) {
+                    highest = p;
+                }
+            });
+
+            // Update Probability Bars in UI
+            prediction.forEach(p => {
+                const bar = document.getElementById(`prob-bar-${p.className.replace(/\s+/g, '-')}`);
+                const text = document.getElementById(`prob-text-${p.className.replace(/\s+/g, '-')}`);
+                if (bar && text) {
+                    const pct = Math.round(p.probability * 100);
+                    bar.style.width = `${pct}%`;
+                    text.textContent = `${pct}%`;
+                }
+            });
+
+            // Update Badge
+            if (highest.probability > 0.6) {
+                detectedBadge.textContent = `${highest.className} (${Math.round(highest.probability * 100)}%)`;
+                detectedBadge.className = "text-xs font-bold px-2.5 py-1 rounded-md bg-indigo-900 text-indigo-200 border border-indigo-500";
+            } else {
+                detectedBadge.textContent = "인식 모호함";
+                detectedBadge.className = "text-xs font-bold px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-700";
+            }
+        }
+
+        function updateGameLogic() {
+            const currentTime = player.getCurrentTime();
+            const duration = player.getDuration ? player.getDuration() : 0;
+
+            videoTimeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+
+            const activeStep = ACTION_TIMELINE.find(step => currentTime >= step.start && currentTime < step.end);
+
+            if (activeStep) {
+                if (currentTimelineIndex !== activeStep.id) {
+                    currentTimelineIndex = activeStep.id;
+                    updateTimelineUI(activeStep.id);
+                    currentTargetName.textContent = activeStep.name;
+                }
+
+                if (!actionEvaluated[activeStep.id]) {
+                    const matchedPrediction = currentPredictions.find(p => p.className.toUpperCase() === activeStep.action.toUpperCase());
+                    if (matchedPrediction && matchedPrediction.probability >= 0.75) {
+                        actionEvaluated[activeStep.id] = true;
+                        scoreSuccess(activeStep);
+                    }
+                }
+            } else {
+                if (currentTimelineIndex !== -1) {
+                    if (currentTimelineIndex && !actionEvaluated[currentTimelineIndex]) {
+                        scoreMiss();
+                    }
+                    currentTimelineIndex = -1;
+                    updateTimelineUI(-1);
+                    currentTargetName.textContent = "대기 중...";
+                }
+            }
+        }
+
+        function scoreSuccess(step) {
+            combo += 1;
+            const points = 100 + (combo * 10);
+            score += points;
+
+            scoreDisplay.textContent = score;
+            comboDisplay.textContent = combo;
+
+            const card = document.getElementById(`timeline-card-${step.id}`);
+            if (card) {
+                card.classList.remove('border-slate-700', 'bg-slate-800');
+                card.classList.add('border-emerald-500', 'bg-emerald-950/60');
+                card.querySelector('.status-icon').innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>`;
+            }
+
+            showFeedback("PERFECT! +" + points, "text-emerald-400");
+        }
+
+        function scoreMiss() {
+            combo = 0;
+            comboDisplay.textContent = combo;
+
+            if (currentTimelineIndex > 0) {
+                const card = document.getElementById(`timeline-card-${currentTimelineIndex}`);
+                if (card && !actionEvaluated[currentTimelineIndex]) {
+                    card.classList.add('border-rose-500/50', 'bg-rose-950/30');
+                    card.querySelector('.status-icon').innerHTML = `<i class="fa-solid fa-circle-xmark text-rose-400 text-lg"></i>`;
+                }
+            }
+
+            showFeedback("MISS!", "text-rose-500");
+        }
+
+        function showFeedback(text, colorClass) {
+            feedbackText.textContent = text;
+            feedbackText.className = `text-5xl font-black tracking-wider animate-pop ${colorClass}`;
+            feedbackOverlay.classList.remove('opacity-0');
+            
+            setTimeout(() => {
+                feedbackOverlay.classList.add('opacity-0');
+            }, 800);
+        }
+
+        function renderProbabilityBars() {
+            const classes = ['REST', 'SAY HI', 'WALK', 'SWING', 'PAW', 'JUMP'];
+            probabilityContainer.innerHTML = '';
+
+            classes.forEach(cls => {
+                const id = cls.replace(/\s+/g, '-');
+                const div = document.createElement('div');
+                div.className = "bg-slate-900/80 p-2 rounded-lg border border-slate-700/60";
+                div.innerHTML = `
+                    <div class="flex justify-between items-center text-xs font-semibold text-slate-300 mb-1">
+                        <span>${cls}</span>
+                        <span id="prob-text-${id}" class="text-indigo-400 font-mono">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                        <div id="prob-bar-${id}" class="bg-indigo-500 h-full w-0 transition-all duration-100"></div>
+                    </div>
+                `;
+                probabilityContainer.appendChild(div);
+            });
+        }
+
+        function renderTimeline() {
+            timelineContainer.innerHTML = '';
+            ACTION_TIMELINE.forEach(step => {
+                const card = document.createElement('div');
+                card.id = `timeline-card-${step.id}`;
+                card.className = "bg-slate-900/60 border border-slate-700 rounded-xl p-3 flex flex-col justify-between transition-all duration-200 relative overflow-hidden";
+                card.innerHTML = `
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[10px] font-mono text-slate-400">${step.start}s - ${step.end}s</span>
+                        <span class="status-icon"><i class="fa-regular fa-clock text-slate-500"></i></span>
+                    </div>
+                    <div class="font-bold text-sm text-slate-200 flex items-center gap-1.5 my-1">
+                        <i class="fa-solid ${step.icon} text-indigo-400 text-xs"></i>
+                        ${step.action}
+                    </div>
+                `;
+                timelineContainer.appendChild(card);
+            });
+        }
+
+        function updateTimelineUI(activeId) {
+            ACTION_TIMELINE.forEach(step => {
+                const card = document.getElementById(`timeline-card-${step.id}`);
+                if (card) {
+                    if (step.id === activeId) {
+                        card.classList.add('ring-2', 'ring-indigo-500', 'scale-[1.02]');
+                    } else {
+                        card.classList.remove('ring-2', 'ring-indigo-500', 'scale-[1.02]');
+                    }
+                }
+            });
+        }
+
+        function formatTime(seconds) {
+            const min = Math.floor(seconds || 0 / 60);
+            const sec = Math.floor((seconds || 0) % 60);
+            return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+        }
+
+        // Event Listeners
+        btnStart.addEventListener('click', () => {
+            if (player && typeof player.playVideo === 'function') {
+                player.playVideo();
+            }
+        });
+
+        btnPause.addEventListener('click', () => {
+            if (player && typeof player.pauseVideo === 'function') {
+                player.pauseVideo();
+            }
+        });
+
+        window.onload = () => {
+            renderTimeline();
+            initTeachableMachine();
+        };
+    </script>
+</body>
+</html>
